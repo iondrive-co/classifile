@@ -1,8 +1,6 @@
 # Classifile
 
-Small library that looks at a directory of filenames, learns their *shape*, and then predicts likely next values for each filename component (especially numeric indices).
-
-## How the logic works (simple overview)
+Small library that looks at a directory of filenames, learns their patterns, and then predicts likely next values for each filename component
 
 1. **Split filenames into components**
 
@@ -83,42 +81,3 @@ Small library that looks at a directory of filenames, learns their *shape*, and 
 
    The result is a per-position list of suggestions with simple likelihood scores.
 
-## Code layout
-
-- `src/main/clojure/name_model/core.clj`
-  - Parsing and tokenising filenames.
-  - Building the directory model.
-  - Predicting next components.
-  - A tiny `-main` that runs a small demo.
-
-- `src/test/clojure/name_model/core_test.clj`
-  - clojure.test-based tests for parsing, role inference, and prediction.
-
-- `src/test/clojure/name_model/test_runner.clj`
-  - Simple test runner namespace for Gradle.
-
-## Running
-
-From the project root:
-
-```bash
-./gradlew run
-```
-
-This runs a small demo (builds a model from a few sample filenames and prints predictions).
-
-To run the Clojure tests:
-
-```bash
-./gradlew cljTest
-```
-
-## Using in IntelliJ IDEA
-
-1. Open IntelliJ.
-2. Choose “Open” and select the project root directory (`name-model-clj`).
-3. Let IntelliJ import it as a Gradle project.
-4. You can then:
-   - Run the `run` Gradle task for the demo.
-   - Run the `cljTest` Gradle task for tests.
-   - Or use your Clojure plugin (e.g. Cursive) to work directly with the namespaces.
