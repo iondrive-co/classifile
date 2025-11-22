@@ -1,0 +1,41 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.clojure:clojure:1.11.3'
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDirs += ['src/main/clojure']
+        }
+    }
+    test {
+        resources {
+            srcDirs += ['src/test/clojure']
+        }
+    }
+}
+
+application {
+    // Run a tiny demo in iondrive.classifile.core when you do `./gradlew run`
+    mainClass = 'clojure.main'
+}
+
+run {
+    args = ['-m', 'iondrive.classifile.core']
+}
+
+tasks.register('cljTest', JavaExec) {
+    group = 'verification'
+    description = 'Run clojure.test tests'
+    classpath = sourceSets.main.runtimeClasspath + sourceSets.test.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['-m', 'iondrive.classifile.test-runner']
+}
