@@ -1,6 +1,10 @@
 plugins {
     id 'application'
+    id 'java'
 }
+
+group = 'com.github.iondrive-co'
+version = '1.0.0'
 
 repositories {
     mavenCentral()
@@ -24,11 +28,16 @@ sourceSets {
 }
 
 application {
-    // Run a tiny demo in iondrive.classifile.core when you do `./gradlew run`
-    mainClass = 'clojure.main'
+    // Run the Java example by default
+    mainClass = 'iondrive.classifile.JavaExample'
 }
 
-run {
+// Task to run the Clojure demo
+tasks.register('runClojureDemo', JavaExec) {
+    group = 'application'
+    description = 'Run the Clojure demo'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
     args = ['-m', 'iondrive.classifile.core']
 }
 
