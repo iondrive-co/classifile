@@ -45,6 +45,17 @@ public class JavaExample {
         Clojure.var("iondrive.classifile.core", "get-all-patterns");
 
     /**
+     * Helper method to repeat a string n times (Java 8 compatible).
+     */
+    private static String repeat(String str, int count) {
+        StringBuilder sb = new StringBuilder(str.length() * count);
+        for (int i = 0; i < count; i++) {
+            sb.append(str);
+        }
+        return sb.toString();
+    }
+
+    /**
      * Component types - simplified to just two categories.
      */
     public enum ComponentType {
@@ -726,7 +737,7 @@ public class JavaExample {
         String reconstructed2 = parsed4.reconstructWith(newValues);
         System.out.println("Reconstructed (new): " + reconstructed2);
 
-        System.out.println("\n" + "=".repeat(70) + "\n");
+        System.out.println("\n" + repeat("=", 70) + "\n");
 
         // 1. Parse a single filename
         System.out.println("1. Parsing filename:");
