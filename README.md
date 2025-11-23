@@ -139,18 +139,10 @@ saveButton.addActionListener(e -> {
 });
 ```
 
-## Key Features
-
-✅ **Simple** - Two types (PATTERN/VALUE)
-✅ **Smart** - Detects sequences, learns frequency
-✅ **Clean** - Separators handled automatically
-✅ **Complete** - Reconstruct filenames from new values
-
-
 ## Importing with JitPack
 
 1. Go to [jitpack.io](https://jitpack.io)
-2. Enter your repository URL: `https://github.com/yourusername/classifile`
+2. Enter this repository URL: `iondrive-co/classifile
 3. Click "Look up"
 4. Click "Get it" next to your version tag
 5. Wait for JitPack to build (first build may take 2-3 minutes)
@@ -165,6 +157,6 @@ repositories {
 }
 
 dependencies {
-    implementation 'iondrive-co:classifile:v0.0.1'
+    implementation 'iondrive-co:classifile:v0.2.1'
 }
 ```
