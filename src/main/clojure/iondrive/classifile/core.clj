@@ -1,8 +1,8 @@
 (ns iondrive.classifile.core
   "Core logic for parsing filenames, building a simple model over patterns,
    and predicting likely next values for each component."
-  (:require [clojure.string :as str]
-            [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
 
 ;; --- Helpers -------------------------------------------------------------
 
@@ -376,7 +376,105 @@
       {:pattern (:signature current)
        :component-predictions []})))
 
-;; --- Tiny demo main ------------------------------------------------------
+
+(defn get-position-suggestions
+  "Get suggestions for a specific position in the best-matching pattern group.
+
+   Options:
+   - :limit N - Return at most N suggestions (default: 10)
+   - :min-score X - Only return suggestions with score >= X (default: 0.0)
+
+   Returns: vector of {:value string :score double :reason string}"
+  ([model current-name position]
+   (get-position-suggestions model current-name position {}))
+  ([model current-name position {:keys [limit min-score]
+                                 :or {limit 10 min-score 0.0}}]
+   (let [result (predict model current-name)
+         pos-pred (some #(when (= position (:position %)) %)
+                        (:component-predictions result))]
+     (if pos-pred
+       (->> (:suggestions pos-pred)
+            (filter #(>= (:score %) min-score))
+            (take limit)
+            vec)
+       []))))
+
+(defn get-all-position-values
+  "Get all distinct values observed at a specific position in a pattern group.
+   Useful for showing all possible values in a combo box.
+
+   Returns: vector of {:value string :frequency int :score double}
+   Sorted by frequency (most common first)."
+  [model current-name position]
+  (let [current (parse-filename current-name)
+        groups  (:groups model)]
+    (if (seq groups)
+      (let [[group _score]
+            (apply max-key second
+                   (map (fn [g] [g (score-match current g)]) groups))
+            pos-stats (some #(when (= position (:position %)) %)
+                            (:position-stats group))]
+        (if pos-stats
+          (let [distinct-vals (:distinct-values pos-stats)
+                total (double (reduce + (vals distinct-vals)))]
+            (->> distinct-vals
+                 (map (fn [[v freq]]
+                        {:value v
+                         :frequency freq
+                         :score (/ (double freq) total)}))
+                 (sort-by :frequency >)
+                 vec))
+          []))
+      [])))
+
+(defn get-pattern-positions
+  "Get information about all positions in the best-matching pattern group.
+   Returns vector of position metadata for building dynamic UIs.
+
+   Each position includes:
+   - :position - Position index
+   - :type - Component type (:alpha, :numeric, :date, etc.)
+   - :role - Inferred role (:index, :constant, :date, :unknown)
+   - :format - Format string if applicable (e.g., %03d)
+   - :value-count - Number of distinct values observed
+   - :example-values - Up to 3 example values"
+  [model current-name]
+  (let [current (parse-filename current-name)
+        groups  (:groups model)]
+    (if (seq groups)
+      (let [[group _score]
+            (apply max-key second
+                   (map (fn [g] [g (score-match current g)]) groups))]
+        (->> (:position-stats group)
+             (map (fn [pos-stat]
+                    (let [distinct-vals (:distinct-values pos-stat)
+                          examples (take 3 (keys distinct-vals))]
+                      {:position (:position pos-stat)
+                       :type (:type pos-stat)
+                       :role (:role pos-stat)
+                       :format (:format pos-stat)
+                       :value-count (count distinct-vals)
+                       :example-values (vec examples)})))
+             vec))
+      [])))
+
+(defn get-all-patterns
+  "Get information about all pattern groups in the model.
+   Useful for letting users choose which pattern to use.
+
+   Returns vector of:
+   - :signature - Pattern signature string
+   - :file-count - Number of files matching this pattern
+   - :example-files - Up to 3 example filenames"
+  [model]
+  (->> (:groups model)
+       (map (fn [group]
+              (let [files (:files group)
+                    examples (take 3 (map :original files))]
+                {:signature (get-in group [:signature :canonical])
+                 :file-count (count files)
+                 :example-files (vec examples)})))
+       vec))
 
 (defn -main
   "Tiny demo: build a model from a few filenames and print predictions
