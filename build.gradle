@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.github.iondrive-co'
-version = '0.2.1'
+version = '0.3.0'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
@@ -78,4 +78,46 @@ tasks.register('cljTest', JavaExec) {
 // Make test task depend on cljTest
 tasks.named('test') {
     dependsOn 'cljTest'
+}
+
+// Task to test element suggestions
+tasks.register('testElementSuggestions', JavaExec) {
+    group = 'verification'
+    description = 'Test element suggestions'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['test_element_suggestions.clj']
+    standardOutput = System.out
+}
+
+tasks.register('testUserExample', JavaExec) {
+    group = 'verification'
+    description = 'Test with user provided example'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['test_user_example.clj']
+    standardOutput = System.out
+}
+
+tasks.register('testPredict', JavaExec) {
+    group = 'verification'
+    description = 'Test predict function'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['test_predict.clj']
+    standardOutput = System.out
+}
+
+tasks.register('testPredict2', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['test_predict2.clj']
+    standardOutput = System.out
+}
+
+tasks.register('testPredictWithIndex', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'clojure.main'
+    args = ['test_predict_with_index.clj']
+    standardOutput = System.out
 }

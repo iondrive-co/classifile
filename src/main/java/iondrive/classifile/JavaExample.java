@@ -32,9 +32,6 @@ public class JavaExample {
     private static final IFn parseFilename =
         Clojure.var("iondrive.classifile.core", "parse-filename");
 
-    private static final IFn getPositionSuggestions =
-        Clojure.var("iondrive.classifile.core", "get-position-suggestions");
-
     private static final IFn getAllPositionValues =
         Clojure.var("iondrive.classifile.core", "get-all-position-values");
 
@@ -43,6 +40,9 @@ public class JavaExample {
 
     private static final IFn getAllPatterns =
         Clojure.var("iondrive.classifile.core", "get-all-patterns");
+
+    private static final IFn getElementSuggestions =
+        Clojure.var("iondrive.classifile.core", "get-element-suggestions");
 
     /**
      * Helper method to repeat a string n times (Java 8 compatible).
@@ -64,25 +64,25 @@ public class JavaExample {
     }
 
     /**
-     * A filename component with its current value and suggestions.
+     * A filename component (element) with its current value and suggestions.
      * Perfect for populating combo boxes in a UI.
      *
      * Suggestions are ordered (no scores needed):
-     * - PATTERN: Next in sequence, then gaps
-     * - VALUE: Most frequent first, alphabetical tiebreaker
+     * - PATTERN: Current first (unless current is max, then next first), others alphabetically, next last
+     * - VALUE: Current first, others by frequency then alphabetically
      */
     public static class FilenameComponent {
         public final String currentValue;
         public final List<String> suggestions;  // Pre-ordered, most likely first
         public final ComponentType type;
-        public final int position;
+        public final int elementIndex;  // Index in the non-separator components list
 
         public FilenameComponent(String currentValue, List<String> suggestions,
-                                ComponentType type, int position) {
+                                ComponentType type, int elementIndex) {
             this.currentValue = currentValue;
             this.suggestions = suggestions;
             this.type = type;
-            this.position = position;
+            this.elementIndex = elementIndex;
         }
 
         @Override
@@ -155,44 +155,6 @@ public class JavaExample {
         }
     }
 
-    /**
-     * Represents a single suggestion for a filename component.
-     */
-    public static class Suggestion {
-        public final String value;
-        public final double score;
-        public final String reason;
-
-        public Suggestion(String value, double score, String reason) {
-            this.value = value;
-            this.score = score;
-            this.reason = reason;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("Suggestion{value='%s', score=%.2f, reason='%s'}",
-                value, score, reason);
-        }
-    }
-
-    /**
-     * Represents predictions for a single component position.
-     */
-    public static class ComponentPrediction {
-        public final int position;
-        public final List<Suggestion> suggestions;
-
-        public ComponentPrediction(int position, List<Suggestion> suggestions) {
-            this.position = position;
-            this.suggestions = suggestions;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("Position %d: %s", position, suggestions);
-        }
-    }
 
     /**
      * Represents a filename component.
@@ -255,44 +217,6 @@ public class JavaExample {
         return (IPersistentMap) buildModelFromNames.invoke(filenameVector);
     }
 
-    /**
-     * Get predictions for the next filename given a model and current filename.
-     *
-     * @param model The model (from buildModel)
-     * @param currentFilename The current filename
-     * @return List of predictions per position
-     */
-    public static List<ComponentPrediction> getPredictions(
-            IPersistentMap model,
-            String currentFilename) {
-
-        IPersistentMap result = (IPersistentMap) predict.invoke(model, currentFilename);
-        IPersistentVector predictions =
-            (IPersistentVector) result.valAt(Clojure.read(":component-predictions"));
-
-        List<ComponentPrediction> predictionList = new ArrayList<>();
-
-        for (int i = 0; i < predictions.count(); i++) {
-            IPersistentMap pred = (IPersistentMap) predictions.nth(i);
-            int position = ((Long) pred.valAt(Clojure.read(":position"))).intValue();
-            IPersistentVector suggestions =
-                (IPersistentVector) pred.valAt(Clojure.read(":suggestions"));
-
-            List<Suggestion> suggestionList = new ArrayList<>();
-            for (int j = 0; j < suggestions.count(); j++) {
-                IPersistentMap sugg = (IPersistentMap) suggestions.nth(j);
-                suggestionList.add(new Suggestion(
-                    (String) sugg.valAt(Clojure.read(":value")),
-                    (Double) sugg.valAt(Clojure.read(":score")),
-                    (String) sugg.valAt(Clojure.read(":reason"))
-                ));
-            }
-
-            predictionList.add(new ComponentPrediction(position, suggestionList));
-        }
-
-        return predictionList;
-    }
 
     /**
      * Represents a value with its frequency
@@ -300,18 +224,16 @@ public class JavaExample {
     public static class ValueWithFrequency {
         public final String value;
         public final int frequency;
-        public final double score;
 
-        public ValueWithFrequency(String value, int frequency, double score) {
+        public ValueWithFrequency(String value, int frequency) {
             this.value = value;
             this.frequency = frequency;
-            this.score = score;
         }
 
         @Override
         public String toString() {
-            return String.format("ValueWithFrequency{value='%s', frequency=%d, score=%.2f}",
-                value, frequency, score);
+            return String.format("ValueWithFrequency{value='%s', frequency=%d}",
+                value, frequency);
         }
     }
 
@@ -380,15 +302,6 @@ public class JavaExample {
         IPersistentVector parsedComponents =
             (IPersistentVector) parsed.valAt(Clojure.read(":components"));
 
-        // Get predictions for all positions
-        List<ComponentPrediction> predictions = getPredictions(model, currentFilename);
-
-        // Build map of position -> suggestions
-        java.util.Map<Integer, List<Suggestion>> suggestionsByPosition = new java.util.HashMap<>();
-        for (ComponentPrediction pred : predictions) {
-            suggestionsByPosition.put(pred.position, pred.suggestions);
-        }
-
         // Get position info to determine roles (PATTERN vs VALUE)
         List<PositionInfo> positionInfos = getPatternPositions(model, currentFilename);
         java.util.Map<Integer, String> rolesByPosition = new java.util.HashMap<>();
@@ -418,6 +331,7 @@ public class JavaExample {
         List<FilenameComponent> components = new ArrayList<>();
         List<String> separators = new ArrayList<>();
         String lastSeparator = "";
+        int elementIndex = 0;  // Index in non-separator components list
 
         for (int i = 0; i < parsedComponents.count(); i++) {
             IPersistentMap comp = (IPersistentMap) parsedComponents.nth(i);
@@ -448,101 +362,37 @@ public class JavaExample {
                 componentType = ComponentType.VALUE;
             }
 
-            // Get and order suggestions
+            // Get suggestions using new simplified API
+            IPersistentVector suggestionsVec = (IPersistentVector)
+                getElementSuggestions.invoke(model, currentFilename, elementIndex);
+
             List<String> suggestionValues = new ArrayList<>();
-            List<Suggestion> positionSuggestions = suggestionsByPosition.get(i);
-
-            if (componentType == ComponentType.PATTERN) {
-                // PATTERN: Already ordered correctly (next, then gaps)
-                if (positionSuggestions != null) {
-                    for (Suggestion sugg : positionSuggestions) {
-                        suggestionValues.add(sugg.value);
-                    }
-                }
-            } else {
-                // VALUE: Order by frequency (already done), then alphabetically
-                // Get all values with frequencies and sort
-                List<ValueWithFrequency> allValues =
-                    getAllPositionValues(model, currentFilename, i);
-
-                // Sort by frequency desc, then alphabetically
-                allValues.sort((a, b) -> {
-                    if (a.frequency != b.frequency) {
-                        return Integer.compare(b.frequency, a.frequency);
-                    }
-                    return a.value.compareTo(b.value);
-                });
-
-                for (ValueWithFrequency val : allValues) {
-                    suggestionValues.add(val.value);
+            if (suggestionsVec != null) {
+                for (int j = 0; j < suggestionsVec.count(); j++) {
+                    suggestionValues.add((String) suggestionsVec.nth(j));
                 }
             }
 
-            // Ensure current value is always first
-            suggestionValues.remove(value);  // Remove if present
-            suggestionValues.add(0, value);  // Add at front
+            // If no suggestions from model, at least include current value
+            if (suggestionValues.isEmpty()) {
+                suggestionValues.add(value);
+            }
 
             components.add(new FilenameComponent(
-                value, suggestionValues, componentType, i));
+                value, suggestionValues, componentType, elementIndex));
 
             // Store separator that follows this component
             if (!lastSeparator.isEmpty()) {
                 separators.add(lastSeparator);
                 lastSeparator = "";
             }
+
+            elementIndex++;
         }
 
         return new ParsedFilename(currentFilename, extension, components, separators);
     }
 
-    /**
-     * Get suggestions for a specific position (for populating a combo box).
-     * Returns at most 'limit' suggestions with score >= minScore.
-     *
-     * @param model The model
-     * @param currentFilename The current/template filename
-     * @param position Which position to get suggestions for
-     * @param limit Maximum number of suggestions (default: 10)
-     * @param minScore Minimum score threshold (default: 0.0)
-     * @return List of suggestions for this position only
-     */
-    public static List<Suggestion> getPositionSuggestions(
-            IPersistentMap model,
-            String currentFilename,
-            int position,
-            int limit,
-            double minScore) {
-
-        IPersistentMap options = (IPersistentMap) Clojure.var("clojure.core", "hash-map").invoke(
-            Clojure.read(":limit"), limit,
-            Clojure.read(":min-score"), minScore
-        );
-
-        IPersistentVector suggestions = (IPersistentVector)
-            getPositionSuggestions.invoke(model, currentFilename, position, options);
-
-        List<Suggestion> suggestionList = new ArrayList<>();
-        for (int i = 0; i < suggestions.count(); i++) {
-            IPersistentMap sugg = (IPersistentMap) suggestions.nth(i);
-            suggestionList.add(new Suggestion(
-                (String) sugg.valAt(Clojure.read(":value")),
-                (Double) sugg.valAt(Clojure.read(":score")),
-                (String) sugg.valAt(Clojure.read(":reason"))
-            ));
-        }
-
-        return suggestionList;
-    }
-
-    /**
-     * Get suggestions for a specific position with default limit (10) and minScore (0.0).
-     */
-    public static List<Suggestion> getPositionSuggestions(
-            IPersistentMap model,
-            String currentFilename,
-            int position) {
-        return getPositionSuggestions(model, currentFilename, position, 10, 0.0);
-    }
 
     /**
      * Get all distinct values observed at a position, sorted by frequency.
@@ -571,8 +421,7 @@ public class JavaExample {
 
             valueList.add(new ValueWithFrequency(
                 (String) val.valAt(Clojure.read(":value")),
-                frequency,
-                (Double) val.valAt(Clojure.read(":score"))
+                frequency
             ));
         }
 
@@ -695,7 +544,7 @@ public class JavaExample {
         System.out.println("Extension: " + parsed2.extension);
         System.out.println("Components:");
         for (FilenameComponent comp : parsed2.components) {
-            System.out.println("  Position " + comp.position + ":");
+            System.out.println("  Element " + comp.elementIndex + ":");
             System.out.println("    current: \"" + comp.currentValue + "\"");
             System.out.println("    type: " + comp.type);
             System.out.println("    suggestions: " + comp.suggestions);
@@ -739,8 +588,8 @@ public class JavaExample {
 
         System.out.println("\n" + repeat("=", 70) + "\n");
 
-        // 1. Parse a single filename
-        System.out.println("1. Parsing filename:");
+        // 5. Parse a single filename into components
+        System.out.println("5. Parsing filename into components:");
         String filename = "Report_2024-03-Invoice_001.pdf";
         List<Component> components = parseFilenameToComponents(filename);
         System.out.println("   Filename: " + filename);
@@ -748,68 +597,23 @@ public class JavaExample {
             System.out.println("   " + comp);
         }
 
-        // 2. Build a model from multiple filenames
-        System.out.println("\n2. Building model from filenames:");
-        List<String> filenames = new ArrayList<>();
-        filenames.add("File_001.log");
-        filenames.add("File_002.log");
-        filenames.add("File_003.log");
-
-        for (String name : filenames) {
-            System.out.println("   - " + name);
-        }
-
-        IPersistentMap model = buildModel(filenames);
-        System.out.println("   Model built successfully!");
-
-        // 3. Get predictions for next filename
-        System.out.println("\n3. Getting predictions for: File_003.log");
-        List<ComponentPrediction> predictions = getPredictions(model, "File_003.log");
-
-        for (ComponentPrediction pred : predictions) {
-            System.out.println("   Position " + pred.position + ":");
-            for (Suggestion sugg : pred.suggestions) {
-                System.out.println("      " + sugg);
-            }
-        }
-
-        // 4. Find the next sequential index suggestion
-        System.out.println("\n4. Predicted next filename components:");
-        for (ComponentPrediction pred : predictions) {
-            if (!pred.suggestions.isEmpty()) {
-                Suggestion best = pred.suggestions.get(0);
-                if ("next sequential index".equals(best.reason)) {
-                    System.out.println(
-                        "   Position " + pred.position + ": " + best.value +
-                        " (score: " + best.score + ")");
-                }
-            }
-        }
-
-        // 5. example - get suggestions for a specific position
-        System.out.println("\n5. Combo box example - Position 2 (numeric index):");
-        List<Suggestion> comboBoxItems = getPositionSuggestions(model, "File_003.log", 2, 5, 0.0);
-        for (Suggestion item : comboBoxItems) {
-            System.out.println("   - " + item.value + " (" + item.reason + ")");
-        }
-
-        // 6. Get all observed values for a position
-        System.out.println("\n6. All observed values at position 2:");
-        List<ValueWithFrequency> allValues = getAllPositionValues(model, "File_003.log", 2);
+        // 6. Get all observed values for a position (useful for combo boxes)
+        System.out.println("\n6. All observed values at position 2 (numeric index) in log files:");
+        List<ValueWithFrequency> allValues = getAllPositionValues(logModel, "File_003.log", 2);
         for (ValueWithFrequency val : allValues) {
             System.out.println("   - " + val.value + " (used " + val.frequency + " times)");
         }
 
         // 7. Get metadata about all positions
         System.out.println("\n7. Pattern structure:");
-        List<PositionInfo> positions = getPatternPositions(model, "File_003.log");
+        List<PositionInfo> positions = getPatternPositions(logModel, "File_003.log");
         for (PositionInfo pos : positions) {
             System.out.println("   " + pos + ", examples: " + pos.exampleValues);
         }
 
         // 8. Get all available patterns
         System.out.println("\n8. Available patterns in model:");
-        List<PatternInfo> patterns = getAllPatterns(model);
+        List<PatternInfo> patterns = getAllPatterns(imageModel);
         for (PatternInfo pattern : patterns) {
             System.out.println("   " + pattern);
             System.out.println("      Examples: " + pattern.exampleFiles);

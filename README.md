@@ -10,65 +10,63 @@ Analyzes filenames, learns patterns, and suggests values for building new filena
 
 ### Two Component Types
 
-- **PATTERN** - Predictable sequences (e.g., `001`, `002`, `003` → suggests `004`)
-- **VALUE** - Everything else (e.g., `Alpha`, `Beta` → suggests most frequent first)
+- **PATTERN** - Sequential numbers or dates (e.g., `001`, `002`, `003` → suggests `004` first when current is max)
+- **VALUE** - Everything else (ordered by frequency, then alphabetically)
 
 ## Quick Start
+
+### Java
 
 ```java
 // Build model from your files
 List<String> files = Arrays.asList("IMG_001.jpg", "IMG_002.jpg", "IMG_003.jpg");
 IPersistentMap model = JavaExample.buildModel(files);
 
-// Parse a filename
-ParsedFilename parsed = JavaExample.parseCurrentFilename(model, "IMG_003.jpg");
+// Parse a filename (Java API still uses filenames, not positions)
+ParsedFilename parsed = JavaExample.parseCurrentFilename(model, "IMG_002.jpg");
 
 // parsed.extension = ".jpg"
 // parsed.components[0] = { currentValue: "IMG", suggestions: ["IMG"], type: VALUE }
-// parsed.components[1] = { currentValue: "003", suggestions: ["003", "004"], type: PATTERN }
+// parsed.components[1] = { currentValue: "002", suggestions: ["002", "003", "001"], type: PATTERN }
+//                                                             ^^^^ current first for existing files
 
 // Build new filename
-String next = parsed.reconstructWith(Arrays.asList("IMG", "004"));
-// Result: "IMG_004.jpg"
+String next = parsed.reconstructWith(Arrays.asList("IMG", "003"));
+// Result: "IMG_003.jpg"
 ```
 
+**Note:** The Java API still uses filename-based input, while the Clojure API uses position-based input.
 
-## Java API
+### Clojure
 
-### Parse and Get Suggestions
+```clojure
+(require '[iondrive.classifile.core :as cf])
 
-```java
-import iondrive.classifile.JavaExample;
-import iondrive.classifile.JavaExample.*;
-import clojure.lang.IPersistentMap;
-import java.util.*;
+;; Build model from filenames
+(def files ["IMG_001.jpg" "IMG_002.jpg" "IMG_003.jpg"])
+(def model (cf/build-model-from-names files))
 
-// 1. Build model from your files
-List<String> files = Arrays.asList("IMG_001.jpg", "IMG_002.jpg", "IMG_003.jpg");
-IPersistentMap model = JavaExample.buildModel(files);
+;; Get suggestions for position 1 (existing file "IMG_002.jpg")
+(cf/predict model 1)
+;; => {:pattern {...}
+;;     :elements [{:element-index 0, :type :value, :suggestions ["IMG"]}
+;;                {:element-index 1, :type :pattern, :suggestions ["002" "003" "001" "004"]}]}
+;;                                                                  ^^^^ current first for existing positions
 
-// 2. Parse a filename and get all components with suggestions
-ParsedFilename parsed = JavaExample.parseCurrentFilename(model, "IMG_003.jpg");
+;; Get suggestions for position 3 (next file after the list)
+(cf/predict model 3)
+;; => {:pattern {...}
+;;     :elements [{:element-index 0, :type :value, :suggestions ["IMG"]}
+;;                {:element-index 1, :type :pattern, :suggestions ["004" "001" "002" "003"]}]}
+;;                                                                  ^^^^ next first for positions beyond list
 
-// 3. Access results
-System.out.println("Extension: " + parsed.extension);  // ".jpg"
+;; Get suggestions for just element 0 at position 3
+(cf/predict model 3 0)
+;; => ["IMG"]
 
-for (FilenameComponent comp : parsed.components) {
-    System.out.println("Current: " + comp.currentValue);    // "IMG" or "003"
-    System.out.println("Type: " + comp.type);               // VALUE or PATTERN
-    System.out.println("Suggestions: " + comp.suggestions); // Pre-ordered list
-}
-```
-
-**Output:**
-```
-Extension: .jpg
-Current: IMG
-Type: VALUE
-Suggestions: [IMG]
-Current: 003
-Type: PATTERN
-Suggestions: [003, 004]
+;; Get suggestions for just element 1 at position 3
+(cf/predict model 3 1)
+;; => ["004" "001" "002" "003"]  ; Next value "004" first (position beyond list)
 ```
 
 ### API Reference
@@ -87,8 +85,9 @@ class ParsedFilename {
 // FilenameComponent - One part of the filename
 class FilenameComponent {
     String currentValue;        // e.g., "IMG" or "003"
-    List<String> suggestions;   // Ordered, current value first
+    List<String> suggestions;   // Ordered by likelihood
     ComponentType type;         // PATTERN or VALUE
+    int elementIndex;           // Index in components list
 }
 
 // ComponentType - Two types
@@ -114,7 +113,7 @@ for (FilenameComponent comp : parsed.components) {
     // Create combo box for this component
     JComboBox<String> combo = new JComboBox<>();
 
-    // Populate with suggestions (already ordered, current value first)
+    // Populate with suggestions (already ordered by likelihood)
     for (String suggestion : comp.suggestions) {
         combo.addItem(suggestion);
     }

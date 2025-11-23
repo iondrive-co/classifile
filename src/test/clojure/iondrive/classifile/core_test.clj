@@ -27,8 +27,7 @@
                   ["File_001.log"
                    "File_002.log"
                    "File_003.log"])
-        result  (core/predict model "File_003.log")
-        values  (->> (:component-predictions result)
-                     (mapcat :suggestions)
-                     (map :value))]
+        result  (core/predict model 2)  ; Position 2 = last file "File_003.log"
+        values  (->> (:elements result)
+                     (mapcat :suggestions))]
     (is (some #{"004"} values))))

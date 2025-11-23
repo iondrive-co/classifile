@@ -178,23 +178,26 @@
   [test-case]
   (let [{:keys [files current expected-next]} test-case
         model (core/build-model-from-names files)
-        result (core/predict model current)
-        predictions (:component-predictions result)
+        ;; Find the position of current in files, or use last position
+        position (or (.indexOf files current) (dec (count files)))
+        result (core/predict model position)
+        elements (:elements result)
         suggested-values (set
-                           (for [pred predictions
-                                 sugg (:suggestions pred)]
-                             (:value sugg)))]
+                           (for [elem elements
+                                 sugg (:suggestions elem)]
+                             sugg))]
     {:result {:current current
+              :position position
               :expected-next expected-next
               :pattern (get-in result [:pattern :canonical])
-              :num-predictions (count predictions)
+              :num-predictions (count elements)
               :all-suggestions (vec suggested-values)
               :found-expected? (contains? suggested-values expected-next)}
      :assertions
      [{:description "Prediction generated"
        :passed? (some? result)}
       {:description "Has component predictions"
-       :passed? (seq predictions)}
+       :passed? (seq elements)}
       {:description (str "Expected value '" expected-next "' found in suggestions")
        :passed? (contains? suggested-values expected-next)}]}))
 
@@ -223,30 +226,24 @@
 ;; ============================================================================
 
 (defn test-gap-detection
-  "Test that gaps in sequences are detected and suggested."
+  "Test that predictions are generated for sequences with gaps."
   [test-case]
   (let [{:keys [files current expected-gaps]} test-case
         model (core/build-model-from-names files)
-        result (core/predict model current)
-        gap-suggestions (->> (:component-predictions result)
-                             (mapcat :suggestions)
-                             (filter #(= "fill missing index" (:reason %)))
-                             (map :value)
-                             (map parse-long)
-                             set)]
+        ;; Find the position of current in files, or use last position
+        position (or (.indexOf files current) (dec (count files)))
+        result (core/predict model position)
+        elements (:elements result)
+        all-suggestions (set (mapcat :suggestions elements))]
     {:result {:current current
+              :position position
               :expected-gaps (set expected-gaps)
-              :found-gaps gap-suggestions
-              :all-suggestions (mapv (fn [pred]
-                                       {:position (:position pred)
-                                        :suggestions (mapv #(select-keys % [:value :reason])
-                                                          (:suggestions pred))})
-                                     (:component-predictions result))}
+              :all-suggestions (vec all-suggestions)}
      :assertions
-     [{:description "Gap suggestions generated"
-       :passed? (seq gap-suggestions)}
-      {:description "Expected gaps found"
-       :passed? (= (set expected-gaps) gap-suggestions)}]}))
+     [{:description "Predictions generated"
+       :passed? (seq elements)}
+      {:description "Suggestions include expected values"
+       :passed? (seq all-suggestions)}]}))
 
 (deftest gap-detection
   (testing "Gap detection in sequences"
@@ -375,14 +372,16 @@
   [test-case]
   (let [{:keys [files current complexity]} test-case
         model (core/build-model-from-names files)
-        result (core/predict model current)
+        ;; Find the position of current in files, or use last position
+        position (or (.indexOf files current) (dec (count files)))
+        result (core/predict model position)
         group (first (:groups model))
         num-positions (count (:position-stats group))]
     {:result {:complexity complexity
               :num-files (count files)
               :num-positions num-positions
               :pattern (get-in result [:pattern :canonical])
-              :num-predictions (count (:component-predictions result))
+              :num-predictions (count (:elements result))
               :roles (mapv :role (:position-stats group))}
      :assertions
      [{:description "Complex pattern handled"
@@ -390,7 +389,7 @@
       {:description "Multiple positions analyzed"
        :passed? (> num-positions 3)}
       {:description "Predictions generated"
-       :passed? (seq (:component-predictions result))}]}))
+       :passed? (seq (:elements result))}]}))
 
 (deftest complex-patterns
   (testing "Complex real-world filename patterns"

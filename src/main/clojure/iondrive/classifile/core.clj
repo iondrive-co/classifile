@@ -1,8 +1,7 @@
 (ns iondrive.classifile.core
   "Core logic for parsing filenames, building a simple model over patterns,
    and predicting likely next values for each component."
-  (:require [clojure.set :as set]
-            [clojure.string :as str]))
+  (:require [clojure.string :as str]))
 
 ;; --- Helpers -------------------------------------------------------------
 
@@ -311,99 +310,118 @@
               (recur (inc i) score))))
         score))))
 
-(defn- predict-for-position
-  "Given position stats, produce a sequence of suggestions:
-   {:value string :score double :reason string}."
-  [{:keys [type role numeric-values distinct-values format]}]
+(defn- get-suggestions-for-element
+  "Get ordered suggestions for an element (without scores or reasons).
+   Returns plain vector of strings ordered by likelihood.
+
+   For PATTERN types (sequential indices):
+   - If current is max observed: [next, all observed alphabetically]
+   - Otherwise: [current, other observed alphabetically, next]
+
+   For VALUE types:
+   - [current, others by frequency then alphabetically]"
+  [{:keys [type role numeric-values distinct-values format]} current-value]
   (cond
+    ;; PATTERN type - sequential numeric indices
     (and (= :numeric type)
          (= :index role)
          (seq numeric-values))
     (let [sorted (sort numeric-values)
           mx     (last sorted)
           next-v (format-number (inc mx) format)
-          mn     (first sorted)
-          full   (set (range mn (inc mx)))
-          gaps   (sort (set/difference full (set sorted)))]
-      (into [{:value  next-v
-              :score  0.9
-              :reason "next sequential index"}]
-            (map-indexed
-              (fn [i g]
-                {:value  (format-number g format)
-                 :score  (max 0.3 (- 0.7 (* 0.05 i)))
-                 :reason "fill missing index"}))
-            gaps))
+          all-observed (map #(format-number % format) sorted)
+          all-observed-sorted (sort all-observed)
+          current-num (try (Long/parseLong current-value) (catch Exception _ nil))]
+      (if (and current-num (= current-num mx))
+        ;; Current is max - put next first, then all observed alphabetically
+        (vec (cons next-v all-observed-sorted))
+        ;; Current is not max - put current first, others alphabetically, then next
+        (let [others (remove #(= % current-value) all-observed-sorted)]
+          (vec (concat [current-value] others [next-v])))))
 
+    ;; VALUE type - order by frequency, then alphabetically
     (seq distinct-values)
-    (let [total (double (reduce + (vals distinct-values)))]
-      (->> distinct-values
-           (sort-by val >)
-           (take 5)
-           (map (fn [[v c]]
-                  {:value  v
-                   :score  (/ (double c) total)
-                   :reason (if (= :constant role)
-                             "constant"
-                             "frequent value")}))))
+    (let [sorted-by-freq (sort-by (fn [[v c]] [(- c) v]) distinct-values)
+          all-values (map first sorted-by-freq)]
+      ;; Ensure current value is first
+      (let [others (remove #(= % current-value) all-values)]
+        (vec (cons current-value others))))
 
-    :else []))
+    ;; No data - just return current value
+    :else [current-value]))
 
 (defn predict
-  "Given a model and a current filename, return a prediction map:
+  "Get suggestions for filename elements based on position in the file list.
 
-   {:pattern              {:elements [...] :canonical \"...\"}
-    :component-predictions
-      [{:position   int
-        :suggestions [{:value string :score double :reason string} ...]} ...]}"
-  [model current-name]
-  (let [current (parse-filename current-name)
-        groups  (:groups model)]
-    (if (seq groups)
-      (let [[group score]
-            (apply max-key second
-                   (map (fn [g] [g (score-match current g)]) groups))]
-        (if (neg? score)
-          {:pattern (:signature current)
-           :component-predictions []}
-          {:pattern (:signature group)
-           :component-predictions
-           (->> (:position-stats group)
-                (map (fn [cs]
-                       {:position   (:position cs)
-                        :suggestions (vec (predict-for-position cs))}))
-                vec)}))
-      {:pattern (:signature current)
-       :component-predictions []})))
+   With 2 args (model, position):
+     Returns all elements with suggestions for the file at that position
+     position can be an integer or numeric string
+     {:pattern {...} :elements [{:element-index ... :suggestions ...} ...]}
 
+   With 3 args (model, position, element-index):
+     Returns suggestions for a specific element (plain vector of strings)
 
-(defn get-position-suggestions
-  "Get suggestions for a specific position in the best-matching pattern group.
-
-   Options:
-   - :limit N - Return at most N suggestions (default: 10)
-   - :min-score X - Only return suggestions with score >= X (default: 0.0)
-
-   Returns: vector of {:value string :score double :reason string}"
-  ([model current-name position]
-   (get-position-suggestions model current-name position {}))
-  ([model current-name position {:keys [limit min-score]
-                                 :or {limit 10 min-score 0.0}}]
-   (let [result (predict model current-name)
-         pos-pred (some #(when (= position (:position %)) %)
-                        (:component-predictions result))]
-     (if pos-pred
-       (->> (:suggestions pos-pred)
-            (filter #(>= (:score %) min-score))
-            (take limit)
-            vec)
+   Example:
+     (predict model 0)     ; All elements for position 0
+     (predict model 3)     ; All elements for position 3 (next file)
+     (predict model 3 0)   ; Just element 0 suggestions for position 3"
+  ([model position]
+   (let [pos (cond
+               (integer? position) position
+               (string? position) (or (parse-long position) 0)
+               :else 0)
+         groups (:groups model)]
+     (if (seq groups)
+       (let [group (first groups)
+             files (:files group)
+             ;; Check if position is beyond the list
+             beyond-list? (>= pos (count files))
+             ;; Use the file at position, or the last file if position is beyond the list
+             reference-file (if (and (< pos (count files)) (>= pos 0))
+                             (nth files pos)
+                             (last files))
+             non-sep-stats (->> (:position-stats group)
+                               (remove #(#{:sep :ext} (:type %)))
+                               vec)]
+         {:pattern (:signature group)
+          :elements
+          (vec
+           (for [[element-index stats] (map-indexed vector non-sep-stats)]
+             (let [;; Get current value from reference file if it exists
+                   ref-components (:components reference-file)
+                   ref-comp (nth ref-components (:position stats) nil)
+                   current-value (:value ref-comp)
+                   role (:role stats)
+                   comp-type (if (#{:index :date} role) :pattern :value)
+                   ;; For positions beyond the list, use normal suggestions (next first when current is max)
+                   ;; For existing positions, always put current first
+                   suggestions (if beyond-list?
+                                (get-suggestions-for-element stats current-value)
+                                ;; Existing position - ensure current is first
+                                (let [all-suggs (get-suggestions-for-element stats current-value)]
+                                  (if (= (first all-suggs) current-value)
+                                    all-suggs
+                                    ;; Reorder to put current first
+                                    (vec (cons current-value (remove #{current-value} all-suggs))))))]
+               {:element-index element-index
+                :type comp-type
+                :suggestions suggestions})))})
+       {:pattern nil
+        :elements []})))
+  ([model position element-index]
+   (let [result (predict model position)
+         elements (:elements result)]
+     (if-let [elem (nth elements element-index nil)]
+       (:suggestions elem)
        []))))
+
+
 
 (defn get-all-position-values
   "Get all distinct values observed at a specific position in a pattern group.
    Useful for showing all possible values in a combo box.
 
-   Returns: vector of {:value string :frequency int :score double}
+   Returns: vector of {:value string :frequency int}
    Sorted by frequency (most common first)."
   [model current-name position]
   (let [current (parse-filename current-name)
@@ -415,15 +433,12 @@
             pos-stats (some #(when (= position (:position %)) %)
                             (:position-stats group))]
         (if pos-stats
-          (let [distinct-vals (:distinct-values pos-stats)
-                total (double (reduce + (vals distinct-vals)))]
-            (->> distinct-vals
-                 (map (fn [[v freq]]
-                        {:value v
-                         :frequency freq
-                         :score (/ (double freq) total)}))
-                 (sort-by :frequency >)
-                 vec))
+          (->> (:distinct-values pos-stats)
+               (map (fn [[v freq]]
+                      {:value v
+                       :frequency freq}))
+               (sort-by :frequency >)
+               vec)
           []))
       [])))
 
@@ -458,6 +473,53 @@
              vec))
       [])))
 
+(defn get-element-suggestions
+  "Get ordered suggestions for a specific element in a filename.
+   Returns a simple vector of strings ordered by likelihood (no scores or reasons).
+
+   Element ordering:
+   - For existing files in the model: current value first
+   - For new files beyond the model: next predicted value first (if current is max)
+   - VALUE types: current first, others by frequency then alphabetically
+
+   Arguments:
+   - model: The model built from filenames
+   - current-name: The current filename to analyze
+   - element-index: Which element (0-based index of non-separator, non-extension components)
+
+   Returns: vector of suggestion strings"
+  [model current-name element-index]
+  (let [current (parse-filename current-name)
+        groups  (:groups model)]
+    (if (seq groups)
+      (let [[group _score]
+            (apply max-key second
+                   (map (fn [g] [g (score-match current g)]) groups))
+            ;; Check if this filename exists in the model
+            file-exists? (some #(= current-name (:original %)) (:files group))
+            ;; Filter to get only non-separator, non-extension components
+            non-sep-components (filter (fn [comp]
+                                        (not (#{:sep :ext} (:type comp))))
+                                      (:components current))
+            ;; Get the element at the requested index
+            current-component (nth non-sep-components element-index nil)
+            current-value (:value current-component)
+            position (:index current-component)
+            ;; Get stats for this position from the model
+            element-stats (some #(when (= position (:position %)) %)
+                               (:position-stats group))]
+        (if (and element-stats current-value)
+          (let [suggestions (get-suggestions-for-element element-stats current-value)]
+            ;; For existing files, ensure current is first
+            (if file-exists?
+              (if (= (first suggestions) current-value)
+                suggestions
+                (vec (cons current-value (remove #{current-value} suggestions))))
+              ;; For new files, use natural ordering (next first if current is max)
+              suggestions))
+          []))
+      [])))
+
 (defn get-all-patterns
   "Get information about all pattern groups in the model.
    Useful for letting users choose which pattern to use.
@@ -477,16 +539,20 @@
        vec))
 
 (defn -main
-  "Tiny demo: build a model from a few filenames and print predictions
-   for the last one."
+  "Tiny demo: build a model from a few filenames and print predictions."
   [& _args]
-  (let [names  ["File_001.log"
-                "File_002.log"
-                "File_003.log"]
-        model  (build-model-from-names names)
-        result (predict model "File_003.log")]
-    (println "Demo prediction for \"File_003.log\" based on:")
+  (let [names  ["1. small.jpg"
+                "2. medium.jpg"
+                "3. large.jpg"]
+        model  (build-model-from-names names)]
+    (println "Demo: Model built from:")
     (doseq [n names]
       (println " -" n))
-    (println "\nResult:")
-    (prn result)))
+    (println "\nPredict for position 0 (first file):")
+    (println (predict model 0))
+    (println "\nPredict for position 2 (last file):")
+    (println (predict model 2))
+    (println "\nPredict for position 3 (next file after list):")
+    (println (predict model 3))
+    (println "\nPredict element 0 for position 3:")
+    (println (predict model 3 0))))
